@@ -1,5 +1,5 @@
 from datetime import date
-
+import pandas as pd
 import streamlit as st
 from supabase import create_client
 
@@ -231,6 +231,7 @@ else:
     elif role == "teacher":
         st.subheader("👨‍🏫 Teacher Dashboard")
 
+        # Query students allocated to THIS teacher
         students_res = supabase.table("profiles").select("*").eq("role", "student").eq("teacher_id", user.id).execute()
         students = students_res.data
 
@@ -267,7 +268,7 @@ else:
                             from_p = st.number_input("From Page*", min_value=1, max_value=604, value=1)
                             to_p = st.number_input("To Page*", min_value=1, max_value=604, value=1)
                         with col2:
-                            session_date = st.date_input("Date", value= date.today())
+                            session_date = st.date_input("Date", value=date.today())
                             mins = st.number_input("Minutes Spent*", min_value=1, value=15)
 
                         notes = st.text_input("Teacher Notes / Feedback", placeholder="e.g., Good fluency on verses 1-15")
@@ -394,6 +395,90 @@ else:
 
                                 st.success(f"Logged {len(selected_juzs)} Juz(s) as '{selected_status_label}' for {selected_email}!")
                                 st.rerun()
+
+            # --- MODE 2: VIEW STUDENT LOGS & PROGRESS GRID ---
+            elif teacher_nav == "👀 View Student Logs & Progress":
+                selected_email = st.selectbox("Select Student to View:", list(student_dict.keys()), key="view_student_select")
+                selected_id = student_dict[selected_email]
+
+                # 1. Fetch page status map safely
+                try:
+                    status_res = supabase.table("page_status").select("*").eq("student_id", selected_id).execute()
+                    status_map = {row["page_number"]: row["status"] for row in (status_res.data or [])}
+                except Exception as e:
+                    status_map = {}
+                    st.warning(f"Could not load page statuses: {e}")
+
+                color_map = {
+                    "tested": "#15803d",
+                    "memorized": "#4ade80",
+                    "active": "#facc15",
+                    "unmemorized": "#374151"
+                }
+                text_color_map = {
+                    "tested": "#ffffff",
+                    "memorized": "#000000",
+                    "active": "#000000",
+                    "unmemorized": "#9ca3af"
+                }
+
+                st.markdown("#### 🗺️ Student Quran Memorization Map")
+                st.markdown("""
+                <div style="display: flex; gap: 15px; flex-wrap: wrap; margin-bottom: 12px; font-size: 0.85rem;">
+                    <span><span style="color:#15803d;">■</span> Dark Green: Tested</span>
+                    <span><span style="color:#4ade80;">■</span> Light Green: Memorized</span>
+                    <span><span style="color:#facc15;">■</span> Yellow: Active Revision</span>
+                    <span><span style="color:#374151;">■</span> Gray: Unmemorized</span>
+                </div>
+                """, unsafe_allow_html=True)
+
+                juz_starts = [1, 22, 42, 62, 82, 102, 122, 142, 162, 182, 202, 222, 242, 262, 282, 302, 322, 342, 362, 382, 402, 422, 442, 462, 482, 502, 522, 542, 562, 582]
+
+                grid_html = '<div style="max-height: 480px; overflow-y: auto; padding: 10px; background: #111827; border-radius: 8px; display: flex; flex-direction: column; gap: 8px;">'
+
+                for juz_num in range(1, 31):
+                    start_p = juz_starts[juz_num - 1]
+                    end_p = (juz_starts[juz_num] - 1) if juz_num < 30 else 604
+                    
+                    grid_html += '<div style="display: flex; align-items: center; gap: 8px; background: rgba(255,255,255,0.03); padding: 5px 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.05);">'
+                    grid_html += f'<div style="min-width: 55px; font-size: 0.75rem; font-weight: bold; color: #facc15;">Juz {juz_num}</div>'
+                    grid_html += '<div style="display: flex; flex-wrap: nowrap; overflow-x: auto; gap: 4px; flex-grow: 1; padding: 2px 0;">'
+                    
+                    for page in range(start_p, end_p + 1):
+                        p_status = status_map.get(page, "unmemorized")
+                        bg_col = color_map.get(p_status, "#374151")
+                        txt_col = text_color_map.get(p_status, "#9ca3af")
+                        
+                        grid_html += f'<div title="Page {page}: {p_status.capitalize()}" style="background-color: {bg_col}; color: {txt_col}; text-align: center; font-size: 0.65rem; font-weight: bold; border-radius: 3px; min-width: 24px; height: 26px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; user-select: none;">{page}</div>'
+                        
+                    grid_html += '</div></div>'
+
+                grid_html += '</div>'
+                st.markdown(grid_html, unsafe_allow_html=True)
+
+                st.divider()
+
+                # 2. Fetch student logs safely
+                st.markdown("#### 📋 Recorded Sessions")
+                try:
+                    logs_res = supabase.table("daily_logs").select("*").eq("student_id", selected_id).order("log_date", desc=True).execute()
+                    
+                    if not logs_res.data:
+                        st.info("No recorded sessions for this student yet.")
+                    else:
+                        df_logs = pd.DataFrame(logs_res.data)
+                        
+                        expected_cols = ["log_date", "from_surah", "to_surah", "from_page", "to_page", "minutes", "notes"]
+                        for col in expected_cols:
+                            if col not in df_logs.columns:
+                                df_logs[col] = ""
+
+                        display_df = df_logs[expected_cols].copy()
+                        display_df.columns = ["Date", "From Surah", "To Surah", "Start Page", "End Page", "Mins", "Teacher Notes"]
+                        st.dataframe(display_df, use_container_width=True, hide_index=True)
+                except Exception as e:
+                    st.error(f"Error loading logs: {e}")
+                
 
     # --- 3. COORDINATOR VIEW ---
     elif role == "coordinator":
