@@ -124,24 +124,91 @@ else:
 
     # --- 1. STUDENT VIEW ---
     if role == "student":
-        prog_res = supabase.table("progress").select("*").eq("student_id", user.id).execute()
-        if prog_res.data:
-            prog = prog_res.data[0]
-            st.metric("Current Page", f"Page {prog['current_page']} / 604")
-            st.metric("Current Juz", f"Juz {prog['current_juz']} / 30")
-            st.progress(prog['current_page'] / 604)
-
-        st.subheader("📝 Private Study Planner")
-        plan_res = supabase.table("student_plans").select("*").eq("student_id", user.id).execute()
-        current_plan = plan_res.data[0]["plan_content"] if plan_res.data else ""
+        st.subheader("🗺️ Quran Memorization Map (604 Pages)")
         
-        new_plan = st.text_area("Write your study notes/plan here:", value=current_plan)
-        if st.button("Save Plan"):
-            if plan_res.data:
-                supabase.table("student_plans").update({"plan_content": new_plan}).eq("student_id", user.id).execute()
-            else:
-                supabase.table("student_plans").insert({"student_id": user.id, "plan_content": new_plan}).execute()
-            st.success("Plan saved successfully!")
+        # Fetch status overrides for this student
+        status_res = supabase.table("page_status").select("*").eq("student_id", user.id).execute()
+        status_map = {row["page_number"]: row["status"] for row in (status_res.data or [])}
+
+        # Color configurations
+        color_map = {
+            "tested": "#15803d",       # Dark Green
+            "memorized": "#4ade80",    # Light Green
+            "active": "#facc15",       # Yellow
+            "unmemorized": "#374151"   # Gray
+        }
+        
+        text_color_map = {
+            "tested": "#ffffff",
+            "memorized": "#000000",
+            "active": "#000000",
+            "unmemorized": "#9ca3af"
+        }
+
+        # Legend
+        st.markdown("""
+        <div style="display: flex; gap: 15px; flex-wrap: wrap; margin-bottom: 15px; font-size: 0.85rem;">
+            <span><span style="color:#15803d;">■</span> Dark Green: Memorized & Tested</span>
+            <span><span style="color:#4ade80;">■</span> Light Green: Memorized (Untested)</span>
+            <span><span style="color:#facc15;">■</span> Yellow: Active Revision</span>
+            <span><span style="color:#374151;">■</span> Gray: Not Memorized</span>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Build 604-block grid
+        grid_html = '<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(28px, 1fr)); gap: 4px; max-height: 400px; overflow-y: auto; padding: 5px; background: #111827; border-radius: 8px;">'
+        for page in range(1, 605):
+            p_status = status_map.get(page, "unmemorized")
+            bg_col = color_map[p_status]
+            txt_col = text_color_map[p_status]
+            
+            grid_html += f'<div title="Page {page}: {p_status.capitalize()}" style="background-color: {bg_col}; color: {txt_col}; text-align: center; font-size: 0.65rem; font-weight: bold; border-radius: 3px; padding: 6px 0; user-select: none;">{page}</div>'
+        grid_html += '</div>'
+        
+        st.markdown(grid_html, unsafe_allow_html=True)
+        st.divider()
+
+        # Section 2: Teacher Logged Sessions
+        st.subheader("📋 Session History (From Teacher)")
+        logs_res = supabase.table("daily_logs").select("*").eq("student_id", user.id).order("log_date", desc=True).execute()
+        
+        if not logs_res.data:
+            st.info("No recorded sessions from your teacher yet.")
+        else:
+            import pandas as pd
+            df_logs = pd.DataFrame(logs_res.data)
+            display_df = df_logs[["log_date", "from_surah", "to_surah", "from_page", "to_page", "minutes", "notes"]]
+            display_df.columns = ["Date", "From Surah", "To Surah", "Start Page", "End Page", "Mins", "Teacher Notes"]
+            st.dataframe(display_df, use_container_width=True, hide_index=True)
+
+        st.divider()
+
+        # Section 3: Personal Notes & Goals
+        st.subheader("📝 Personal Notes & Goals")
+        
+        with st.form("add_student_note", clear_on_submit=True):
+            new_note = st.text_area("Write a new note or goal:")
+            if st.form_submit_button("Save Note"):
+                if new_note.strip():
+                    supabase.table("student_notes").insert({"student_id": user.id, "content": new_note}).execute()
+                    st.success("Note added!")
+                    st.rerun()
+                else:
+                    st.warning("Note cannot be empty.")
+
+        # Display history newest to oldest
+        notes_res = supabase.table("student_notes").select("*").eq("student_id", user.id).order("created_at", desc=True).execute()
+        
+        if notes_res.data:
+            st.write("**Saved Notes & Goals:**")
+            for note in notes_res.data:
+                created_dt = note["created_at"][:16].replace("T", " ")
+                st.markdown(f"""
+                <div style="background-color: rgba(255,255,255,0.05); border-left: 3px solid #facc15; padding: 10px; margin-bottom: 8px; border-radius: 0 5px 5px 0;">
+                    <small style="color: #9ca3af;">{created_dt}</small>
+                    <p style="margin: 4px 0 0 0; color: #f3f4f6;">{note['content']}</p>
+                </div>
+                """, unsafe_allow_html=True)
 
     # --- 2. TEACHER VIEW ---
     elif role == "teacher":
