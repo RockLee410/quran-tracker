@@ -227,76 +227,237 @@ else:
 
     # --- 2. TEACHER VIEW ---
     elif role == "teacher":
-        st.subheader("👨‍🏫 Student Progress Entry")
-        
-        # Get assigned students
+        st.subheader("👨‍🏫 Teacher Dashboard")
+
+        # Query students allocated to THIS teacher
         students_res = supabase.table("profiles").select("*").eq("role", "student").eq("teacher_id", user.id).execute()
         students = students_res.data
 
         if not students:
-            st.info("No students allocated to you yet.")
+            st.info("No students are currently allocated to you by the coordinator.")
         else:
+            teacher_nav = st.radio("Select View:", ["📝 Log Session for a Student", "👀 View Student Logs & Progress"], horizontal=True)
+            st.divider()
+
             student_dict = {s["email"]: s["id"] for s in students}
-            selected_email = st.selectbox("Select Student:", list(student_dict.keys()))
-            selected_id = student_dict[selected_email]
 
-            surah_list = [f"{s[0]}. {s[1]}" for s in SURAH_DATA]
+            # --- MODE 1: LOG SESSION ---
+            if teacher_nav == "📝 Log Session for a Student":
+                selected_email = st.selectbox("Select Student:", list(student_dict.keys()), key="teacher_log_student_select")
+                selected_id = student_dict[selected_email]
 
-            tab_pages, tab_surah = st.tabs(["📄 Log Page Range", "📖 Log Specific Surah"])
+                status_options = {
+                    "Dark Green: Memorized & Tested": "tested",
+                    "Light Green: Memorized (Untested)": "memorized",
+                    "Yellow: Active Revision": "active",
+                    "Gray: Not Memorized": "unmemorized"
+                }
 
-            with tab_pages:
-                with st.form("teacher_log_pages"):
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        from_p = st.number_input("From Page", min_value=1, max_value=604, value=1)
-                        to_p = st.number_input("To Page", min_value=1, max_value=604, value=1)
-                    with col2:
-                        session_date = st.date_input("Date")
-                        mins = st.number_input("Minutes Spent", min_value=1, value=15)
+                tab_pages, tab_surahs, tab_juzs = st.tabs(["📄 Page Range", "📖 Specific Surah/s", "🔸 Multiple Juz/s"])
 
-                    notes = st.text_input("Teacher Feedback / Notes", placeholder="e.g., Excellent Tajweed on verse 10")
+                # TAB 1: PAGE RANGE
+                with tab_pages:
+                    with st.form("teacher_log_pages_form", clear_on_submit=True):
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            from_p = st.number_input("From Page*", min_value=1, max_value=604, value=1)
+                            to_p = st.number_input("To Page*", min_value=1, max_value=604, value=1)
+                        with col2:
+                            session_date = st.date_input("Date", value=date.today())
+                            mins = st.number_input("Minutes Spent*", min_value=1, value=15)
+
+                        selected_status_label = st.selectbox("Update Page Status To:", list(status_options.keys()))
+                        notes = st.text_input("Teacher Notes / Feedback", placeholder="e.g., Excellent Tajweed on verse 10")
+
+                        if st.form_submit_button("💾 Save Session"):
+                            if to_p < from_p:
+                                st.error("To Page cannot be less than From Page.")
+                            else:
+                                f_surah = next((f"{s[0]}. {s[1]}" for s in SURAH_DATA if s[2] <= from_p <= s[3]), "")
+                                t_surah = next((f"{s[0]}. {s[1]}" for s in SURAH_DATA if s[2] <= to_p <= s[3]), f_surah)
+
+                                # Insert daily log
+                                supabase.table("daily_logs").insert({
+                                    "student_id": selected_id,
+                                    "log_date": str(session_date),
+                                    "from_surah": f_surah,
+                                    "to_surah": t_surah,
+                                    "from_page": int(from_p),
+                                    "to_page": int(to_p),
+                                    "minutes": int(mins),
+                                    "notes": notes
+                                }).execute()
+
+                                # Update page colors
+                                target_status = status_options[selected_status_label]
+                                page_updates = [{"student_id": selected_id, "page_number": p, "status": target_status} for p in range(int(from_p), int(to_p) + 1)]
+                                supabase.table("page_status").upsert(page_updates, on_conflict="student_id,page_number").execute()
+
+                                st.success(f"Logged Pages {from_p}–{to_p} for {selected_email}!")
+                                st.rerun()
+
+                # TAB 2: MULTIPLE SURAHS
+                with tab_surahs:
+                    surah_list = [f"{s[0]}. {s[1]}" for s in SURAH_DATA]
+                    with st.form("teacher_log_surahs_form", clear_on_submit=True):
+                        selected_surahs = st.multiselect("Select Surah(s)*", surah_list)
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            session_date = st.date_input("Date", value=date.today(), key="s_date")
+                        with col2:
+                            mins = st.number_input("Minutes Spent*", min_value=1, value=15, key="s_mins")
+
+                        selected_status_label = st.selectbox("Update Page Status To:", list(status_options.keys()), key="s_status")
+                        notes = st.text_input("Teacher Notes / Feedback", key="s_notes")
+
+                        if st.form_submit_button("💾 Save Session"):
+                            if not selected_surahs:
+                                st.error("Please select at least one Surah.")
+                            else:
+                                target_status = status_options[selected_status_label]
+                                logs_to_insert = []
+                                status_updates = []
+
+                                for s_label in selected_surahs:
+                                    s_rec = next(s for s in SURAH_DATA if f"{s[0]}. {s[1]}" == s_label)
+                                    logs_to_insert.append({
+                                        "student_id": selected_id,
+                                        "log_date": str(session_date),
+                                        "from_surah": s_label,
+                                        "to_surah": s_label,
+                                        "from_page": s_rec[2],
+                                        "to_page": s_rec[3],
+                                        "minutes": max(1, int(mins // len(selected_surahs))),
+                                        "notes": notes
+                                    })
+                                    for p in range(s_rec[2], s_rec[3] + 1):
+                                        status_updates.append({"student_id": selected_id, "page_number": p, "status": target_status})
+
+                                supabase.table("daily_logs").insert(logs_to_insert).execute()
+                                supabase.table("page_status").upsert(status_updates, on_conflict="student_id,page_number").execute()
+
+                                st.success(f"Logged {len(selected_surahs)} Surah(s) for {selected_email}!")
+                                st.rerun()
+
+                # TAB 3: MULTIPLE JUZS
+                with tab_juzs:
+                    juz_options = [f"Juz {i}" for i in range(1, 31)]
+                    juz_starts = [1, 22, 42, 62, 82, 102, 122, 142, 162, 182, 202, 222, 242, 262, 282, 302, 322, 342, 362, 382, 402, 422, 442, 462, 482, 502, 522, 542, 562, 582]
+
+                    with st.form("teacher_log_juzs_form", clear_on_submit=True):
+                        selected_juzs = st.multiselect("Select Juz(s)*", juz_options)
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            session_date = st.date_input("Date", value=date.today(), key="j_date")
+                        with col2:
+                            mins = st.number_input("Minutes Spent*", min_value=1, value=15, key="j_mins")
+
+                        selected_status_label = st.selectbox("Update Page Status To:", list(status_options.keys()), key="j_status")
+                        notes = st.text_input("Teacher Notes / Feedback", key="j_notes")
+
+                        if st.form_submit_button("💾 Save Session"):
+                            if not selected_juzs:
+                                st.error("Please select at least one Juz.")
+                            else:
+                                target_status = status_options[selected_status_label]
+                                logs_to_insert = []
+                                status_updates = []
+
+                                for j_str in selected_juzs:
+                                    j_num = int(j_str.replace("Juz ", ""))
+                                    start_p = juz_starts[j_num - 1]
+                                    end_p = (juz_starts[j_num] - 1) if j_num < 30 else 604
+
+                                    f_surah = next((f"{s[0]}. {s[1]}" for s in SURAH_DATA if s[2] <= start_p <= s[3]), "")
+                                    t_surah = next((f"{s[0]}. {s[1]}" for s in SURAH_DATA if s[2] <= end_p <= s[3]), f_surah)
+
+                                    logs_to_insert.append({
+                                        "student_id": selected_id,
+                                        "log_date": str(session_date),
+                                        "from_surah": f_surah,
+                                        "to_surah": t_surah,
+                                        "from_page": start_p,
+                                        "to_page": end_p,
+                                        "minutes": max(1, int(mins // len(selected_juzs))),
+                                        "notes": notes
+                                    })
+                                    for p in range(start_p, end_p + 1):
+                                        status_updates.append({"student_id": selected_id, "page_number": p, "status": target_status})
+
+                                supabase.table("daily_logs").insert(logs_to_insert).execute()
+                                supabase.table("page_status").upsert(status_updates, on_conflict="student_id,page_number").execute()
+
+                                st.success(f"Logged {len(selected_juzs)} Juz(s) for {selected_email}!")
+                                st.rerun()
+
+            # --- MODE 2: VIEW STUDENT LOGS & PROGRESS GRID ---
+            elif teacher_nav == "👀 View Student Logs & Progress":
+                selected_email = st.selectbox("Select Student to View:", list(student_dict.keys()), key="view_student_select")
+                selected_id = student_dict[selected_email]
+
+                # Fetch status overrides
+                status_res = supabase.table("page_status").select("*").eq("student_id", selected_id).execute()
+                status_map = {row["page_number"]: row["status"] for row in (status_res.data or [])}
+
+                color_map = {
+                    "tested": "#15803d",
+                    "memorized": "#4ade80",
+                    "active": "#facc15",
+                    "unmemorized": "#374151"
+                }
+                text_color_map = {
+                    "tested": "#ffffff",
+                    "memorized": "#000000",
+                    "active": "#000000",
+                    "unmemorized": "#9ca3af"
+                }
+
+                st.markdown("#### 🗺️ Student Quran Memorization Map")
+                st.markdown("""
+                <div style="display: flex; gap: 15px; flex-wrap: wrap; margin-bottom: 12px; font-size: 0.85rem;">
+                    <span><span style="color:#15803d;">■</span> Dark Green: Tested</span>
+                    <span><span style="color:#4ade80;">■</span> Light Green: Memorized</span>
+                    <span><span style="color:#facc15;">■</span> Yellow: Active Revision</span>
+                    <span><span style="color:#374151;">■</span> Gray: Unmemorized</span>
+                </div>
+                """, unsafe_allow_html=True)
+
+                juz_starts = [1, 22, 42, 62, 82, 102, 122, 142, 162, 182, 202, 222, 242, 262, 282, 302, 322, 342, 362, 382, 402, 422, 442, 462, 482, 502, 522, 542, 562, 582]
+
+                grid_html = '<div style="max-height: 480px; overflow-y: auto; padding: 10px; background: #111827; border-radius: 8px; display: flex; flex-direction: column; gap: 8px;">'
+
+                for juz_num in range(1, 31):
+                    start_p = juz_starts[juz_num - 1]
+                    end_p = (juz_starts[juz_num] - 1) if juz_num < 30 else 604
                     
-                    if st.form_submit_button("Save Session"):
-                        # Auto-detect Surah names from page numbers
-                        f_surah = next((f"{s[0]}. {s[1]}" for s in SURAH_DATA if s[2] <= from_p <= s[3]), "")
-                        t_surah = next((f"{s[0]}. {s[1]}" for s in SURAH_DATA if s[2] <= to_p <= s[3]), f_surah)
-
-                        supabase.table("daily_logs").insert({
-                            "student_id": selected_id,
-                            "log_date": str(session_date),
-                            "from_surah": f_surah,
-                            "to_surah": t_surah,
-                            "from_page": int(from_p),
-                            "to_page": int(to_p),
-                            "minutes": int(mins),
-                            "notes": notes
-                        }).execute()
-
-                        # Automatically update progress table
-                        new_juz = get_juz(to_p)
-                        supabase.table("progress").upsert({"student_id": selected_id, "current_page": int(to_p), "current_juz": new_juz}).execute()
-
-                        st.success(f"Recorded Page {from_p} to {to_p} for {selected_email}!")
-                        st.rerun()
-
-            with tab_surah:
-                with st.form("teacher_log_surah"):
-                    selected_surah = st.selectbox("Select Surah Completed:", surah_list)
-                    s_notes = st.text_input("Notes", key="s_notes")
+                    grid_html += '<div style="display: flex; align-items: center; gap: 8px; background: rgba(255,255,255,0.03); padding: 5px 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.05);">'
+                    grid_html += f'<div style="min-width: 55px; font-size: 0.75rem; font-weight: bold; color: #facc15;">Juz {juz_num}</div>'
+                    grid_html += '<div style="display: flex; flex-wrap: nowrap; overflow-x: auto; gap: 4px; flex-grow: 1; padding: 2px 0;">'
                     
-                    if st.form_submit_button("Log Complete Surah"):
-                        surah_rec = next(s for s in SURAH_DATA if f"{s[0]}. {s[1]}" == selected_surah)
-                        supabase.table("daily_logs").insert({
-                            "student_id": selected_id,
-                            "from_surah": selected_surah,
-                            "to_surah": selected_surah,
-                            "from_page": surah_rec[2],
-                            "to_page": surah_rec[3],
-                            "notes": s_notes
-                        }).execute()
+                    for page in range(start_p, end_p + 1):
+                        p_status = status_map.get(page, "unmemorized")
+                        bg_col = color_map[p_status]
+                        txt_col = text_color_map[p_status]
                         
-                        st.success(f"Logged Surah {surah_rec[1]} for {selected_email}!")
-                        st.rerun()
+                        grid_html += f'<div title="Page {page}: {p_status.capitalize()}" style="background-color: {bg_col}; color: {txt_col}; text-align: center; font-size: 0.65rem; font-weight: bold; border-radius: 3px; min-width: 24px; height: 26px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; user-select: none;">{page}</div>'
+                        
+                    grid_html += '</div></div>'
+
+                grid_html += '</div>'
+                st.markdown(grid_html, unsafe_allow_html=True)
+
+                st.divider()
+
+                st.markdown("#### 📋 Recorded Sessions")
+                logs_res = supabase.table("daily_logs").select("*").eq("student_id", selected_id).order("log_date", desc=True).execute()
+                if not logs_res.data:
+                    st.info("No recorded sessions for this student.")
+                else:
+                    import pandas as pd
+                    df_logs = pd.DataFrame(logs_res.data)
+                    display_df = df_logs[["log_date", "from_surah", "to_surah", "from_page", "to_page", "minutes", "notes"]]
+                    display_df.columns = ["Date", "From Surah", "To Surah", "Start Page", "End Page", "Mins", "Teacher Notes"]
+                    st.dataframe(display_df, use_container_width=True, hide_index=True)
 
     # --- 3. COORDINATOR VIEW ---
     elif role == "coordinator":
