@@ -155,14 +155,29 @@ else:
         </div>
         """, unsafe_allow_html=True)
 
-        # Build 604-block grid
-        grid_html = '<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(28px, 1fr)); gap: 4px; max-height: 400px; overflow-y: auto; padding: 5px; background: #111827; border-radius: 8px;">'
-        for page in range(1, 605):
-            p_status = status_map.get(page, "unmemorized")
-            bg_col = color_map[p_status]
-            txt_col = text_color_map[p_status]
+        # Juz Page Boundaries (Standard Madani Mushaf)
+        juz_starts = [1, 22, 42, 62, 82, 102, 122, 142, 162, 182, 202, 222, 242, 262, 282, 302, 322, 342, 362, 382, 402, 422, 442, 462, 482, 502, 522, 542, 562, 582]
+
+        # Build 30-row layout (1 dedicated row per Juz)
+        grid_html = '<div style="max-height: 520px; overflow-y: auto; padding: 10px; background: #111827; border-radius: 8px; display: flex; flex-direction: column; gap: 8px;">'
+
+        for juz_num in range(1, 31):
+            start_p = juz_starts[juz_num - 1]
+            end_p = (juz_starts[juz_num] - 1) if juz_num < 30 else 604
             
-            grid_html += f'<div title="Page {page}: {p_status.capitalize()}" style="background-color: {bg_col}; color: {txt_col}; text-align: center; font-size: 0.65rem; font-weight: bold; border-radius: 3px; padding: 6px 0; user-select: none;">{page}</div>'
+            grid_html += '<div style="display: flex; align-items: center; gap: 8px; background: rgba(255,255,255,0.03); padding: 5px 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.05);">'
+            grid_html += f'<div style="min-width: 55px; font-size: 0.75rem; font-weight: bold; color: #facc15;">Juz {juz_num}</div>'
+            grid_html += '<div style="display: flex; flex-wrap: nowrap; overflow-x: auto; gap: 4px; flex-grow: 1; padding: 2px 0;">'
+            
+            for page in range(start_p, end_p + 1):
+                p_status = status_map.get(page, "unmemorized")
+                bg_col = color_map[p_status]
+                txt_col = text_color_map[p_status]
+                
+                grid_html += f'<div title="Page {page}: {p_status.capitalize()}" style="background-color: {bg_col}; color: {txt_col}; text-align: center; font-size: 0.65rem; font-weight: bold; border-radius: 3px; min-width: 24px; height: 26px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; user-select: none;">{page}</div>'
+                
+            grid_html += '</div></div>'
+
         grid_html += '</div>'
         
         st.markdown(grid_html, unsafe_allow_html=True)
