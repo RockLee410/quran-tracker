@@ -243,12 +243,12 @@ else:
 
             student_dict = {s["email"]: s["id"] for s in students}
 
-            # Status Options with Color Emoji Indicators
+            # Status Options without color names
             status_options = {
-                "🟢 Dark Green: Memorized & Tested": "tested",
-                "🟢 Light Green: Memorized (Untested)": "memorized",
-                "🟡 Yellow: Active Memorization / Revision": "active",
-                "⚪ Gray: Not Memorized": "unmemorized"
+                "Memorized & Tested": "tested",
+                "Memorized (Untested)": "memorized",
+                "Active Memorization / Revision": "active",
+                "Not Memorized": "unmemorized"
             }
 
             # --- MODE 1: LOG SESSION ---
@@ -263,13 +263,13 @@ else:
                     with st.form("teacher_log_pages_form", clear_on_submit=True):
                         selected_status_label = st.selectbox("2. Assign Status Category*", list(status_options.keys()), key="p_status")
                         
-                        col1, col2 = st.columns(2)
+                        col1, col2, col3 = st.columns([1, 1, 1])
                         with col1:
                             from_p = st.number_input("From Page*", min_value=1, max_value=604, value=1)
-                            to_p = st.number_input("To Page*", min_value=1, max_value=604, value=1)
                         with col2:
+                            to_p = st.number_input("To Page*", min_value=1, max_value=604, value=1)
+                        with col3:
                             session_date = st.date_input("Date", value=date.today())
-                            mins = st.number_input("Minutes Spent*", min_value=1, value=15)
 
                         notes = st.text_input("Teacher Notes / Feedback", placeholder="e.g., Good fluency on verses 1-15")
 
@@ -280,15 +280,15 @@ else:
                                 f_surah = next((f"{s[0]}. {s[1]}" for s in SURAH_DATA if s[2] <= from_p <= s[3]), "")
                                 t_surah = next((f"{s[0]}. {s[1]}" for s in SURAH_DATA if s[2] <= to_p <= s[3]), f_surah)
 
-                                # 1. Log Session
+                                # 1. Log Session with Status Category
                                 supabase.table("daily_logs").insert({
                                     "student_id": selected_id,
                                     "log_date": str(session_date),
+                                    "status": selected_status_label,
                                     "from_surah": f_surah,
                                     "to_surah": t_surah,
                                     "from_page": int(from_p),
                                     "to_page": int(to_p),
-                                    "minutes": int(mins),
                                     "notes": notes
                                 }).execute()
 
@@ -306,13 +306,7 @@ else:
                     with st.form("teacher_log_surahs_form", clear_on_submit=True):
                         selected_status_label = st.selectbox("2. Assign Status Category*", list(status_options.keys()), key="s_status")
                         selected_surahs = st.multiselect("Select Surah(s)*", surah_list)
-                        
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            session_date = st.date_input("Date", value=date.today(), key="s_date")
-                        with col2:
-                            mins = st.number_input("Minutes Spent*", min_value=1, value=15, key="s_mins")
-
+                        session_date = st.date_input("Date", value=date.today(), key="s_date")
                         notes = st.text_input("Teacher Notes / Feedback", key="s_notes")
 
                         if st.form_submit_button("💾 Save Session & Update Color Grid"):
@@ -328,11 +322,11 @@ else:
                                     logs_to_insert.append({
                                         "student_id": selected_id,
                                         "log_date": str(session_date),
+                                        "status": selected_status_label,
                                         "from_surah": s_label,
                                         "to_surah": s_label,
                                         "from_page": s_rec[2],
                                         "to_page": s_rec[3],
-                                        "minutes": max(1, int(mins // len(selected_surahs))),
                                         "notes": notes
                                     })
                                     for p in range(s_rec[2], s_rec[3] + 1):
@@ -352,13 +346,7 @@ else:
                     with st.form("teacher_log_juzs_form", clear_on_submit=True):
                         selected_status_label = st.selectbox("2. Assign Status Category*", list(status_options.keys()), key="j_status")
                         selected_juzs = st.multiselect("Select Juz(s)*", juz_options)
-                        
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            session_date = st.date_input("Date", value=date.today(), key="j_date")
-                        with col2:
-                            mins = st.number_input("Minutes Spent*", min_value=1, value=15, key="j_mins")
-
+                        session_date = st.date_input("Date", value=date.today(), key="j_date")
                         notes = st.text_input("Teacher Notes / Feedback", key="j_notes")
 
                         if st.form_submit_button("💾 Save Session & Update Color Grid"):
@@ -380,11 +368,11 @@ else:
                                     logs_to_insert.append({
                                         "student_id": selected_id,
                                         "log_date": str(session_date),
+                                        "status": selected_status_label,
                                         "from_surah": f_surah,
                                         "to_surah": t_surah,
                                         "from_page": start_p,
                                         "to_page": end_p,
-                                        "minutes": max(1, int(mins // len(selected_juzs))),
                                         "notes": notes
                                     })
                                     for p in range(start_p, end_p + 1):
@@ -458,7 +446,7 @@ else:
 
                 st.divider()
 
-                # 2. Fetch student logs safely
+                # 2. Fetch student logs safely including Status Category
                 st.markdown("#### 📋 Recorded Sessions")
                 try:
                     logs_res = supabase.table("daily_logs").select("*").eq("student_id", selected_id).order("log_date", desc=True).execute()
@@ -468,13 +456,16 @@ else:
                     else:
                         df_logs = pd.DataFrame(logs_res.data)
                         
-                        expected_cols = ["log_date", "from_surah", "to_surah", "from_page", "to_page", "minutes", "notes"]
+                        expected_cols = ["log_date", "status", "from_surah", "to_surah", "from_page", "to_page", "notes"]
                         for col in expected_cols:
                             if col not in df_logs.columns:
                                 df_logs[col] = ""
 
+                        # Replace empty/None values for older logs
+                        df_logs["status"] = df_logs["status"].fillna("Not Specified").replace("", "Not Specified")
+
                         display_df = df_logs[expected_cols].copy()
-                        display_df.columns = ["Date", "From Surah", "To Surah", "Start Page", "End Page", "Mins", "Teacher Notes"]
+                        display_df.columns = ["Date", "Status Category", "From Surah", "To Surah", "Start Page", "End Page", "Teacher Notes"]
                         st.dataframe(display_df, use_container_width=True, hide_index=True)
                 except Exception as e:
                     st.error(f"Error loading logs: {e}")
